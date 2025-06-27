@@ -1,6 +1,5 @@
 # Assignmane
 
-Here's a concise explanation of your code changes for the README file, covering key components and business logic:
 
 ### Chat Session Management System
 

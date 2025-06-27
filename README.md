@@ -74,6 +74,17 @@ Max Queue = 16 x 1.5 = 24
 
 ### Key Technical Notes
 
+Technical Approach:
+
+In-memory ConcurrentQueue for session management
+
+Centralized background service coordinating all tasks
+
+Round-robin agent assignment
+
+Local repository for session tracking
+
+
 1. **Message Queue:** 
    - RabbitMQ used for decoupled session processing
    - Only session ID stored in messages (lightweight)
@@ -115,3 +126,57 @@ POST /Poll {sessionId}
 → {status: "pending", message: "In queue..."}
 → {status: "assigned", agent: "John"}
 ```
+
+
+Future Enhancements for Scalability
+1. Decoupled Background Services
+Current Limitation:
+All monitoring tasks run within a single coordinator service:
+
+csharp
+var sessionMonitoring = MonitorInactiveSessions(stoppingToken);
+var shiftMonitoring = MonitorAgentShifts(stoppingToken);
+var agentQueueMonitor = MonitorAgentQueues(stoppingToken);
+Improvement Plan:
+
+Implement specialized cloud-native services:
+
+SessionInactivityService: Dedicated to session timeout handling
+
+ShiftRotationService: Isolated shift management
+
+AgentAssignmentService: Exclusive chat assignment processor
+
+Benefits:
+
+Independent scaling of each function
+
+Fault isolation between components
+
+Resource optimization based on workload
+
+2. RabbitMQ-Based Agent Queues
+Current Limitation:
+In-memory concurrent queues limit horizontal scaling:
+
+csharp
+public ConcurrentQueue<Guid> AgentQueue { get; } = new();
+Improvement Plan:
+
+Replace with dedicated RabbitMQ queues per agent:
+
+csharp
+// Queue declaration
+channel.QueueDeclare($"agent-{agentId}-queue", durable: true);
+
+// Message publishing
+_rabbitMQ.Publish($"agent-{agentId}-queue", sessionId);
+Benefits:
+
+Persistent queues survive service restarts
+
+Distributed processing across multiple instances
+
+Built-in dead-letter handling for failed assignments
+
+Per-agent throughput monitoring

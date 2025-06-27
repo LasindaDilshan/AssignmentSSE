@@ -3,6 +3,13 @@
 
 ### Chat Session Management System
 
+## Getting Started
+
+### Prerequisites
+- .NET 6 SDK
+- RabbitMQ server (running locally)
+- Modern web browser
+  
 **Key Components Implemented:**
 
 1. **Session Creation API (`CreateSession`):**

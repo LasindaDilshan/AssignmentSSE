@@ -18,14 +18,14 @@
    - Returns session status:
      - `pending`: In queue
      - `assigned`: Connected to agent (includes agent name)
-     - `inactive`: No polling for 200s
+     - `inactive`: No polling for 3s
      - `not_found`: Invalid session ID
 
 3. **Background Services:**
    - **RabbitMQ Consumer:** Processes new session IDs
    - **Queue Processing:** Assigns sessions to agents
    - **Agent Queue Monitor:** Assigns chats when agents have capacity
-   - **Session Monitor:** Marks inactive sessions (200s no poll)
+   - **Session Monitor:** Marks inactive sessions (3s no poll)
    - **Shift Monitor:** Handles shift changes and disconnects chats
 
 ---
@@ -67,7 +67,7 @@ Max Queue = 16 x 1.5 = 24
 - Same capacity rules as regular teams
 
 **Inactivity Handling:**
-- Sessions marked `Inactive` after 200s without polling
+- Sessions marked `Inactive` after 3s without polling
 - Agent slots freed immediately
 
 ---

@@ -11,26 +11,28 @@ namespace Assignmane.Services
 
         public AgentAvailabilityService()
         {
-            _teams = InitializeTeams();
+            _teams = InitializeTeams(); // 🔧 Move this logic outside for test injection
             _overflowTeam = InitializeOverflowTeam();
         }
 
         public bool TryGetAvailableAgent(out Agent availableAgent)
         {
             var activeTeam = GetActiveTeam();
-            var allAvailableAgents = activeTeam.Agents.Where(a => a.CanHandleMoreChats()).ToList();
 
-            // Calculate max queue length (capacity * 1.5)
+            var allAvailableAgents = activeTeam.Agents
+                                               .Where(a => a.CanHandleMoreChats())
+                                               .ToList();
+
             int capacity = (int)Math.Floor(
                 activeTeam.Agents.Sum(a => 10 * GetEfficiency(a.Seniority))
             );
-
             int maxQueueLength = (int)(capacity * 1.5);
 
-            // Simulate queue check
-            if (allAvailableAgents.Count == 0 && IsOfficeHours() /* && queueLength >= maxQueueLength */)
+            if (allAvailableAgents.Count == 0 && IsOfficeHours())
             {
-                allAvailableAgents.AddRange(_overflowTeam.Agents.Where(a => a.CanHandleMoreChats()));
+                allAvailableAgents.AddRange(
+                    _overflowTeam.Agents.Where(a => a.CanHandleMoreChats())
+                );
             }
 
             if (allAvailableAgents.Any())
@@ -43,18 +45,17 @@ namespace Assignmane.Services
             availableAgent = null;
             return false;
         }
+
         public IEnumerable<Agent> GetRegularAgents() => _teams.SelectMany(t => t.Agents);
 
         public IEnumerable<Agent> GetAllAgentsIncludingOverflow()
         {
-            if (IsOfficeHours())
-                return GetRegularAgents().Concat(_overflowTeam.Agents);
-            else
-                return GetRegularAgents();
+            return IsOfficeHours()
+                ? GetRegularAgents().Concat(_overflowTeam.Agents)
+                : GetRegularAgents();
         }
 
-
-        // Helper Methods:
+        // 🔧 Logic assumes static time blocks per team — make dynamic if needed
         private Team GetActiveTeam()
         {
             var hour = DateTime.UtcNow.Hour;
@@ -63,6 +64,7 @@ namespace Assignmane.Services
             return _teams[2];
         }
 
+        // 🔧 Time logic should be injected for better testing (IClock or DateTimeProvider) - Time Zone Needed
         private bool IsOfficeHours()
         {
             var hour = DateTime.UtcNow.Hour;
@@ -78,6 +80,7 @@ namespace Assignmane.Services
             _ => 0.0
         };
 
+        // ❌ Hardcoded data — should ideally come from configuration or a seed database
         private List<Team> InitializeTeams()
         {
             return new List<Team>
@@ -115,6 +118,7 @@ namespace Assignmane.Services
                 }
             };
         }
+
         public List<Team> Teams => _teams;
         public Team OverflowTeam => _overflowTeam;
 

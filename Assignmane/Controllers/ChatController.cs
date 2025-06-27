@@ -3,7 +3,6 @@ using Assignmane.Enums;
 using Assignmane.Queue.Services;
 using Assignmane.Repository;
 using Assignmane.Services.Interfaces;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Assignmane.Controllers
@@ -16,8 +15,10 @@ namespace Assignmane.Controllers
         private readonly ChatSessionRepository _sessionRepository;
         private readonly IAgentAvailabilityService _agentAvailability;
 
-
-        public ChatController(RabbitMQService rabbitMQService, ChatSessionRepository sessionRepository , IAgentAvailabilityService agentAvailabilityService)
+        public ChatController(
+            RabbitMQService rabbitMQService,
+            ChatSessionRepository sessionRepository,
+            IAgentAvailabilityService agentAvailabilityService)
         {
             _rabbitMQService = rabbitMQService;
             _sessionRepository = sessionRepository;
@@ -30,7 +31,6 @@ namespace Assignmane.Controllers
         [HttpPost("CreateSession")]
         public IActionResult CreateSession()
         {
-
             try
             {
                 if (_agentAvailability.TryGetAvailableAgent(out var agent))
@@ -44,43 +44,60 @@ namespace Assignmane.Controllers
                     };
 
                     _sessionRepository.Add(chatSession);
-                    _rabbitMQService.PublishMessage("SessionQueue", chatSession.Id); // Send only the ID
 
-                    return Ok(new { status = "available", Message = "Chat session created. Start polling.", SessionId = chatSession.Id });
+                    _rabbitMQService.PublishMessage("SessionQueue", chatSession.Id);
+
+                    return Ok(new
+                    {
+                        status = "available",
+                        message = "Chat session created. Start polling.",
+                        sessionId = chatSession.Id
+                    });
                 }
                 else
                 {
-                    return Ok(new { status = "busy", message = "All agents are currently busy." });
-
+                    // ⚠️ Consider returning 429 (Too Many Requests) or 503 instead of 200
+                    return Ok(new
+                    {
+                        status = "busy",
+                        message = "All agents are currently busy."
+                    });
                 }
-
-                
             }
             catch (Exception ex)
             {
-                // Log the exception
-                return StatusCode(500, "An error occurred while creating the chat session.");
+                // 🔧 Log ex using ILogger<ChatController> (injectable) for better diagnostics
+                return StatusCode(500, new
+                {
+                    status = "error",
+                    message = "An error occurred while creating the chat session."
+                });
             }
         }
 
         /// <summary>
         /// Allows the chat window to poll for a session's status.
         /// </summary>
-        /// <param name="sessionId">The ID of the chat session.</param>
         [HttpPost("Poll")]
         public IActionResult Poll([FromBody] Guid sessionId)
         {
             try
             {
                 var session = _sessionRepository.Get(sessionId);
+
                 if (session == null)
                 {
-                    return NotFound(new { status = "not_found", message = "Session not found or has expired." });
+                    return NotFound(new
+                    {
+                        status = "not_found",
+                        message = "Session not found or has expired."
+                    });
                 }
 
                 session.LastPollTime = DateTime.UtcNow;
                 _sessionRepository.Update(session);
 
+                // ✅ Explicit status handling for client UI
                 if (session.Status == ChatStatus.Queued)
                 {
                     return Ok(new
@@ -92,7 +109,7 @@ namespace Assignmane.Controllers
 
                 if (session.Status == ChatStatus.Assigned)
                 {
-                    string agentName = session.Agent.Name ?? "";
+                    string agentName = session.Agent?.Name ?? "";
 
                     return Ok(new
                     {
@@ -102,6 +119,7 @@ namespace Assignmane.Controllers
                     });
                 }
 
+                // ✅ Catches other statuses (e.g., Inactive, Disconnected, etc.)
                 return Ok(new
                 {
                     status = session.Status.ToString().ToLower(),
@@ -110,6 +128,7 @@ namespace Assignmane.Controllers
             }
             catch (Exception ex)
             {
+                // 🔧 Log the exception details
                 return StatusCode(500, new
                 {
                     status = "error",
@@ -117,7 +136,5 @@ namespace Assignmane.Controllers
                 });
             }
         }
-
-
     }
 }

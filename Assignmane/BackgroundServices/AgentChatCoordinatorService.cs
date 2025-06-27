@@ -7,6 +7,7 @@ using Newtonsoft.Json;
 using RabbitMQ.Client;
 using RabbitMQ.Client.Events;
 using System.Collections.Concurrent;
+using System.Text;
 
 namespace Assignmane.BackgroundServices
 {
@@ -31,11 +32,11 @@ namespace Assignmane.BackgroundServices
         }
 
 
-        protected async override Task ExecuteAsync(CancellationToken stoppingToken)
+        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
             stoppingToken.ThrowIfCancellationRequested();
 
-
+            // 🔁 Refactor: Read RabbitMQ config from appsettings.json using RabbitMQSettings
             var factory = new ConnectionFactory
             {
                 HostName = "localhost",
@@ -43,10 +44,16 @@ namespace Assignmane.BackgroundServices
                 UserName = "admin",
                 Password = "admin"
             };
+
             using var connection = await factory.CreateConnectionAsync();
             using var channel = await connection.CreateChannelAsync();
 
-            await channel.QueueDeclareAsync(queue: "SessionQueue", durable: true, exclusive: false, autoDelete: false,
+            // 🔁 Refactor: Move queue name "SessionQueue" to a constant or configuration
+            await channel.QueueDeclareAsync(
+                queue: "SessionQueue",
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
                 arguments: null);
 
             Console.WriteLine(" [*] Waiting for messages.");
@@ -55,9 +62,10 @@ namespace Assignmane.BackgroundServices
             consumer.ReceivedAsync += (model, ea) =>
             {
                 var body = ea.Body.ToArray();
-                var message = System.Text.Encoding.UTF8.GetString(body);
+                var message = Encoding.UTF8.GetString(body);
+
                 Console.WriteLine($" [x] Received {message}");
-                
+
                 if (Guid.TryParse(JsonConvert.DeserializeObject<string>(message), out var sessionId))
                 {
                     _sessionQueue.Enqueue(sessionId);
@@ -65,22 +73,21 @@ namespace Assignmane.BackgroundServices
                 else
                 {
                     Console.WriteLine($" [!] Invalid GUID format received: {message}");
-                    // Optionally: log or move to dead-letter queue
                 }
+
                 return Task.CompletedTask;
             };
 
             await channel.BasicConsumeAsync("SessionQueue", autoAck: true, consumer: consumer);
 
-            var queueProcessing = ProcessQueue(stoppingToken);  // Can use Background service for this
+            // 🧹 Consider splitting each monitor into its own class implementing IHostedService
+            var queueProcessing = ProcessQueue(stoppingToken);
             var sessionMonitoring = MonitorInactiveSessions(stoppingToken);
             var shiftMonitoring = MonitorAgentShifts(stoppingToken);
             var agentQueueMonitor = MonitorAgentQueues(stoppingToken);
 
             await Task.WhenAll(queueProcessing, sessionMonitoring, shiftMonitoring, agentQueueMonitor);
-
         }
-
 
         private async Task ProcessQueue(CancellationToken stoppingToken)
         {
@@ -91,18 +98,19 @@ namespace Assignmane.BackgroundServices
                     var session = _sessionRepository.Get(sessionId);
                     if (session == null || session.Status != ChatStatus.Queued) continue;
 
-                    // Use shared service logic to get an available agent
                     if (_agentAvailabilityService.TryGetAvailableAgent(out var agentToAssign))
                     {
                         agentToAssign.AgentQueue.Enqueue(session.Id);
 
+                        // 🔁 Refactor: Move assignment logic to AgentAvailabilityService
                         Console.WriteLine($"Queued Chat {session.Id} to Agent {agentToAssign.Name}'s queue.");
                     }
 
-                    await Task.Delay(1000, stoppingToken);
+                    await Task.Delay(1000, stoppingToken); // 🔁 Configurable delay via options?
                 }
             }
         }
+
         private async Task MonitorAgentQueues(CancellationToken stoppingToken)
         {
             while (!stoppingToken.IsCancellationRequested)
@@ -111,25 +119,25 @@ namespace Assignmane.BackgroundServices
                 {
                     Console.WriteLine($"Working MonitorAgentQueues");
 
-                    var allAgents = _agentAvailabilityService.GetAllAgentsIncludingOverflow(); // or from _teams
-                    foreach (var agent in allAgents) // can be scaled by creating queue on RabbitMQ   
+                    var allAgents = _agentAvailabilityService.GetAllAgentsIncludingOverflow();
+
+                    foreach (var agent in allAgents)
                     {
                         try
                         {
                             if (agent.CanHandleMoreChats() && agent.AgentQueue.TryDequeue(out var sessionId))
                             {
                                 var session = _sessionRepository.Get(sessionId);
+
                                 if (session == null || session.Status != ChatStatus.Queued)
-                                {
                                     continue;
-                                }
 
                                 agent.ActiveChats.Add(session);
-
                                 session.AssignedAgentId = agent.Id;
                                 session.AssignmentTime = DateTime.UtcNow;
                                 session.Status = ChatStatus.Assigned;
                                 session.Agent = agent;
+
                                 _sessionRepository.Update(session);
 
                                 Console.WriteLine($"[Agent {agent.Name}] Chat {session.Id} assigned.");
@@ -137,30 +145,22 @@ namespace Assignmane.BackgroundServices
                         }
                         catch (Exception ex)
                         {
+                            // ⚠️ Improve: Replace with ILogger
                             Console.WriteLine($"Error processing agent {agent.Name} in MonitorAgentQueues: {ex}");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
+                    // ⚠️ Improve: Replace with ILogger
                     Console.WriteLine($"Error in MonitorAgentQueues loop: {ex}");
-                    // Optionally decide whether to break or continue
-                    // break; or continue;
                 }
 
-                try
-                {
-                    await Task.Delay(1000, stoppingToken);
-                }
-                catch (TaskCanceledException)
-                {
-                    // Expected when stoppingToken is canceled
-                    break;
-                }
+                // 🔁 Option: Make polling interval configurable
+                try { await Task.Delay(1000, stoppingToken); }
+                catch (TaskCanceledException) { break; }
             }
         }
-
-
 
         private async Task MonitorInactiveSessions(CancellationToken stoppingToken)
         {
@@ -178,22 +178,21 @@ namespace Assignmane.BackgroundServices
                         try
                         {
                             var secondsSinceLastPoll = (DateTime.UtcNow - session.LastPollTime).TotalSeconds;
-                            if (secondsSinceLastPoll > 200)
+
+                            if (secondsSinceLastPoll > 3)
                             {
                                 session.Status = ChatStatus.Inactive;
                                 _sessionRepository.Update(session);
 
                                 if (session.AssignedAgentId.HasValue)
                                 {
-                                    var agent = _teams.SelectMany(t => t.Agents).FirstOrDefault(a => a.Id == session.AssignedAgentId);
+                                    var agent = _teams.SelectMany(t => t.Agents)
+                                                      .FirstOrDefault(a => a.Id == session.AssignedAgentId);
+
                                     if (agent != null)
-                                    {
                                         agent.ActiveChats.RemoveAll(cs => cs.Id == session.Id);
-                                    }
                                     else
-                                    {
-                                        Console.WriteLine($"Agent with ID {session.AssignedAgentId} not found when clearing inactive session {session.Id}.");
-                                    }
+                                        Console.WriteLine($"Agent with ID {session.AssignedAgentId} not found for session {session.Id}.");
                                 }
 
                                 Console.WriteLine($"Chat {session.Id} marked as inactive due to no polling.");
@@ -201,27 +200,19 @@ namespace Assignmane.BackgroundServices
                         }
                         catch (Exception ex)
                         {
+                            // ⚠️ Improve: Use ILogger
                             Console.WriteLine($"Error processing session {session.Id} in MonitorInactiveSessions: {ex}");
-                            // optionally continue to next session
                         }
                     }
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error in MonitorInactiveSessions loop: {ex}");
-                    // Optionally decide if you want to break the loop or continue:
-                    // break; or continue;
                 }
 
-                try
-                {
-                    await Task.Delay(1000, stoppingToken);
-                }
-                catch (TaskCanceledException)
-                {
-                    // This exception is expected when the token is canceled during the delay.
-                    break;
-                }
+                // 🔁 Configurable interval
+                try { await Task.Delay(1000, stoppingToken); }
+                catch (TaskCanceledException) { break; }
             }
         }
 
@@ -307,7 +298,7 @@ namespace Assignmane.BackgroundServices
             if (_teams[0].Agents.Contains(agent)) return currentHour >= 8 && currentHour < 16; // Team A
             if (_teams[1].Agents.Contains(agent)) return currentHour >= 16; // Team B
             if (_teams[2].Agents.Contains(agent)) return currentHour >= 0 && currentHour < 8; // Team C
-            return false;
+            return false; // Refactor to be in AgentAvailabilityService
         }
 
     }

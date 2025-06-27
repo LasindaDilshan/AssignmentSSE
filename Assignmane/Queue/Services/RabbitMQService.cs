@@ -13,11 +13,13 @@ namespace Assignmane.Queue.Services
             _hostName = hostName;
         }
 
+        // ❌ Use of 'async void' is discouraged — refactor to 'Task'
         public async void PublishMessage<T>(string queueName, T message)
         {
             var factory = new ConnectionFactory
             {
-                HostName = "localhost",
+                // ❌ Hardcoded values — refactor to use IConfiguration (e.g., appsettings.json)
+                HostName = "localhost", // ❌ Should use _hostName instead
                 Port = 5672,
                 UserName = "admin",
                 Password = "admin"
@@ -26,13 +28,22 @@ namespace Assignmane.Queue.Services
             using var connection = await factory.CreateConnectionAsync();
             using var channel = await connection.CreateChannelAsync();
 
-            await channel.QueueDeclareAsync(queue: queueName, durable: true, exclusive: false, autoDelete: false,
-           arguments: null);
+            await channel.QueueDeclareAsync(
+                queue: queueName,
+                durable: true,
+                exclusive: false,
+                autoDelete: false,
+                arguments: null
+            );
 
             var body = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(message));
 
-
-            await channel.BasicPublishAsync(exchange: string.Empty, routingKey: queueName, body: body);
+            // ✅ Basic publish to default exchange using routingKey = queueName
+            await channel.BasicPublishAsync(
+                exchange: string.Empty,
+                routingKey: queueName,
+                body: body
+            );
 
             Console.WriteLine($" [x] Sent to '{queueName}': {JsonSerializer.Serialize(message)}");
         }
